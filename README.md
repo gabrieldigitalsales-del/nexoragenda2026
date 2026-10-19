@@ -24,3 +24,7 @@ Abra o endereço fornecido pelo Vite e informe a senha configurada no servidor.
 - O cadastro mantém nomes internos de campos `patient_*` por compatibilidade; a interface mostra **cliente**.
 - Recorrências e conflitos devem ser testados antes do uso diário e alertas de postagem ainda não são automatizados.
 - Senha curta e compartilhada é menos segura que acessos individuais; recomenda-se trocá-la por uma frase-senha forte.
+
+
+## Visual NEXOR (versão quadrada)
+Todos os cartões, inputs, menus, botões, etiquetas e modais agora usam cantos retos. O projeto permanece integrado às tabelas exclusivas `nexor_agenda_2026_*` do Supabase, sem mudança de autenticação ou dados.
