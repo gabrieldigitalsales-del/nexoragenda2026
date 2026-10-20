@@ -561,3 +561,29 @@ svg{display:block;flex:0 0 auto}
 
 /* NEXOR | identidade geométrica, sem cantos arredondados */
 *,*::before,*::after{border-radius:0!important}
+
+
+/* NEXOR — abertura e diálogos internos */
+.nexor-splash{position:fixed;inset:0;z-index:999;background:#f6f6f6;display:grid;place-items:center;padding:24px;font-family:Arial,system-ui,sans-serif}
+.nexor-splash-inner{width:min(420px,100%);background:#fff;border:1px solid #dedede;padding:42px 32px;box-shadow:0 20px 60px rgba(0,0,0,.08);text-align:center}
+.nexor-splash img{height:52px;max-width:100%;object-fit:contain}
+.nexor-splash p{letter-spacing:3px;color:#888;font-size:11px;margin:28px 0}
+.nexor-splash-track{height:10px;border:1px solid #ddd;background:#eee;overflow:hidden}
+.nexor-splash-track div{height:100%;background:#111;transition:width .18s linear}
+.nexor-splash strong{display:block;margin-top:14px;font-size:25px;color:#111}
+.weekday-select{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 18px}
+.weekday-select span{display:block;width:100%;font-weight:600;font-size:13px}
+.weekday-select button{height:42px;min-width:43px;background:#fff;border:1px solid #ccc;border-radius:0;color:#222;font-weight:700}
+.weekday-select button.active{background:#111;border-color:#111;color:#fff}
+.nexor-dialog-shade{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.48);display:grid;place-items:center;padding:22px}
+.nexor-dialog{background:#fff;border:1px solid #dedede;width:min(520px,100%);padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.2);border-radius:0}
+.nexor-dialog h2{font-size:23px;font-weight:600;margin:0 0 12px;color:#111}
+.nexor-dialog p{white-space:pre-wrap;line-height:1.6;color:#555;margin:0 0 28px}
+.nexor-dialog-actions{display:flex;justify-content:flex-end;gap:10px}
+.nexor-dialog button{padding:13px 20px;border-radius:0;font-weight:700;cursor:pointer}
+.nexor-dialog .nexor-ok{background:#111;color:#fff;border:1px solid #111}
+.nexor-dialog .nexor-cancel{background:#f6f6f6;color:#222;border:1px solid #ddd}
+.nexor-dialog-options{display:grid;gap:9px}
+.nexor-dialog-options button{background:#f9f9f9;border:1px solid #ddd;text-align:left;color:#222}
+.nexor-dialog-options button:hover{border-color:#111}
+@media(max-width:520px){.nexor-dialog-actions{flex-direction:column-reverse}.nexor-splash-inner{padding:32px 22px}}
