@@ -101,10 +101,9 @@ function App() {
   useEffect(() => {
     const timer=setInterval(()=>setProgress(v=>Math.min(94,v+7)),100)
     agendaAuth.check().then(ok => {setSession(ok);setProgress(100);setTimeout(()=>setReady(true),250)}).catch(() => {setProgress(100);setTimeout(()=>setReady(true),250)})
-    return ()=>clearInterval(timer)
     const logout = () => setSession(false)
     window.addEventListener('nexor:logout',logout)
-    return () => window.removeEventListener('nexor:logout',logout)
+    return () => {clearInterval(timer);window.removeEventListener('nexor:logout',logout)}
   },[])
   if (!ready) return <LoadingSplash progress={progress}/>
   if (!session) return <Login onLogin={() => setSession(true)} />
