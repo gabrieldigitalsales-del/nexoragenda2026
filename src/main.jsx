@@ -59,8 +59,15 @@ function nullableNumber(value) {
   const n = Number(value)
   return Number.isFinite(n) && n >= 0 ? n : 0
 }
+const WEEKDAYS=[['Seg','Segunda',1],['Ter','Terça',2],['Qua','Quarta',3],['Qui','Quinta',4],['Sex','Sexta',5],['Sáb','Sábado',6],['Dom','Domingo',0]]
+function weekDates(start, days, total) {
+ const allowed=new Set(days);const d=dateFromISO(start);const out=[];
+ while(out.length<total && out.length<520){if(allowed.has(d.getDay()))out.push(toISODate(d));d.setDate(d.getDate()+1)}
+ return out
+}
 function addRecurrenceDate(iso, frequency, index) {
   const d = dateFromISO(iso)
+  if (String(frequency).startsWith('weekday:')) return weekDates(iso,String(frequency).split(':')[1].split(',').map(Number),index+1)[index] || iso
   if (frequency === 'weekly') d.setDate(d.getDate() + 7 * index)
   if (frequency === 'biweekly') d.setDate(d.getDate() + 14 * index)
   if (frequency === 'monthly') d.setMonth(d.getMonth() + index)
@@ -71,12 +78,14 @@ function makeRecurringAppointments(record, opts) {
   const count = Math.max(1, toNumberZero(opts?.count || 1))
   if (repeat === 'none' || count <= 1 || record.id) return [record]
   const groupId = uid('rec')
-  return Array.from({ length: count }, (_, i) => ({
+  const selected=opts.weekdays?.length ? opts.weekdays : [dateFromISO(record.appointment_date).getDay()]
+  const dates=repeat==='weekday'?weekDates(record.appointment_date,selected,count):Array.from({length:count},(_,i)=>addRecurrenceDate(record.appointment_date,repeat,i))
+  return dates.map((date, i) => ({
     ...record,
     id: undefined,
-    appointment_date: addRecurrenceDate(record.appointment_date, repeat, i),
+    appointment_date: date,
     recurrence_group_id: groupId,
-    recurrence_frequency: repeat,
+    recurrence_frequency: repeat==='weekday' ? 'weekday:'+selected.join(',') : repeat,
     recurrence_index: i + 1,
     recurrence_total: count,
     recurrence_original_date: record.appointment_date
@@ -84,16 +93,20 @@ function makeRecurringAppointments(record, opts) {
 }
 function showSupabaseError(action, error) { console.error(action, error); alert(`${action}: ${error?.message || 'erro desconhecido'}`) }
 
+function LoadingSplash({progress}) {return <main className="nexor-splash"><div className="nexor-splash-inner"><img src="/nexor-logo.png" alt="NEXOR"/><p>INICIALIZANDO AGENDA</p><div className="nexor-splash-track"><div style={{width:progress+'%'}}/></div><strong>{progress}%</strong></div></main>}
 function App() {
   const [session, setSession] = useState(false)
   const [ready, setReady] = useState(false)
+  const [progress,setProgress]=useState(0)
   useEffect(() => {
-    agendaAuth.check().then(ok => {setSession(ok);setReady(true)}).catch(() => setReady(true))
+    const timer=setInterval(()=>setProgress(v=>Math.min(94,v+7)),100)
+    agendaAuth.check().then(ok => {setSession(ok);setProgress(100);setTimeout(()=>setReady(true),250)}).catch(() => {setProgress(100);setTimeout(()=>setReady(true),250)})
+    return ()=>clearInterval(timer)
     const logout = () => setSession(false)
     window.addEventListener('nexor:logout',logout)
     return () => window.removeEventListener('nexor:logout',logout)
   },[])
-  if (!ready) return <main className="login-screen">Carregando NEXOR...</main>
+  if (!ready) return <LoadingSplash progress={progress}/>
   if (!session) return <Login onLogin={() => setSession(true)} />
   return <AgendaApp onLogout={async () => {await agendaAuth.logout();setSession(false)}} />
 }
@@ -120,6 +133,10 @@ function AgendaApp({ onLogout }) {
   const [calendarMonth, setCalendarMonth] = useState(new Date())
   const [modal, setModal] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [dialog,setDialog]=useState(null)
+  const ask=(title,message,kind='confirm',options=[])=>new Promise(resolve=>setDialog({title,message,kind,options,resolve}))
+  const finishDialog=(value)=>{dialog?.resolve(value);setDialog(null)}
+  function showSupabaseError(action,error){console.error(action,error);ask('Não foi possível concluir',action+': '+(error?.message||'Erro desconhecido'),'alert')}
 
   async function refresh() {
     setLoading(true)
@@ -141,7 +158,7 @@ function AgendaApp({ onLogout }) {
 
   async function savePatient(data) {
     const record = { ...data, full_name: (data.full_name || '').trim(), status: data.status || 'ativo' }
-    if (!record.full_name) { alert('Digite o nome do cliente.'); return }
+    if (!record.full_name) { await ask('Campo obrigatório','Digite o nome do cliente.','alert'); return }
     if (hasSupabase) {
       const payload = cleanForSupabase(record)
       let result
@@ -156,7 +173,7 @@ function AgendaApp({ onLogout }) {
     setModal(null)
   }
   async function deletePatient(id) {
-    if (!confirm('Excluir cliente? Os compromissos dele serão mantidas sem vínculo.')) return
+    if (!await ask('Excluir cliente','Os compromissos serão mantidos sem vínculo. Deseja excluir?')) return
     if (hasSupabase) { const { error } = await supabase.from('nexor_agenda_2026_clients').delete().eq('id', id); if (error) { alert('Não foi possível excluir o cliente: ' + error.message); return }; await refresh() }
     else { const list = patients.filter(p=>p.id!==id); const listA = appointments.map(a=>a.patient_id===id?{...a,patient_id:null}:a); setPatients(list); setAppointments(listA); saveLocal('nexor_agenda_clients', list); saveLocal('nexor_agenda_events', listA) }
   }
@@ -178,13 +195,13 @@ function AgendaApp({ onLogout }) {
       payment_status: data.payment_status || 'pendente',
       service_type: data.service_type || 'Gravação'
     }
-    if (!record.patient_name) { alert('Selecione ou cadastre um cliente antes de salvar o compromisso.'); return }
-    if (!record.appointment_date || !record.appointment_time) { alert('Informe data e horário do compromisso.'); return }
+    if (!record.patient_name) { await ask('Cliente obrigatório','Selecione ou cadastre um cliente.','alert'); return }
+    if (!record.appointment_date || !record.appointment_time) { await ask('Data e horário','Informe a data e o horário.','alert'); return }
     const records = makeRecurringAppointments(record, recurrenceOpts)
     const conflicts = detectConflicts(records)
     if (conflicts.length) {
       const msg = conflicts.slice(0,5).map(c => `${formatDateBR(c.appointment_date)} às ${String(c.appointment_time).slice(0,5)}`).join('\n')
-      if (!confirm(`Já existe compromisso nesse(s) horário(s):\n${msg}\n\nDeseja salvar mesmo assim?`)) return
+      if (!await ask('Horário ocupado','Já existe compromisso neste horário: '+msg+'. Deseja salvar mesmo assim?')) return
     }
     if (hasSupabase) {
       const payloads = records.map(cleanForSupabase)
@@ -205,7 +222,7 @@ function AgendaApp({ onLogout }) {
     if (!item.recurrence_group_id || scope === 'one') return saveAppointment({ ...item, ...updateData })
     const targets = appointments.filter(a => a.recurrence_group_id === item.recurrence_group_id && (scope === 'future' ? a.appointment_date >= item.appointment_date : true))
     if (!targets.length) return saveAppointment({ ...item, ...updateData })
-    if (!confirm(`Alterar ${targets.length} compromisso(s) desta recorrência?`)) return
+    if (!await ask('Atualizar recorrência','Alterar '+targets.length+' compromisso(s)?')) return
     const changedDate = updateData.appointment_date && updateData.appointment_date !== item.appointment_date
     const changedTime = updateData.appointment_time && updateData.appointment_time !== item.appointment_time
     const updates = targets.map(t => ({
@@ -228,11 +245,12 @@ function AgendaApp({ onLogout }) {
   async function deleteAppointment(item) {
     let ids = [item.id]
     if (item.recurrence_group_id) {
-      const scope = prompt('Este compromisso faz parte de uma recorrência. Digite:\n1 = excluir apenas esta\n2 = esta e próximas\n3 = toda a sequência', '1')
+      const scope = await ask('Excluir recorrência','Escolha quais compromissos serão excluídos.','choice',[['1','Apenas este'],['2','Este e próximos'],['3','Toda a sequência']])
+      if (!scope) return
       if (scope === '2') ids = appointments.filter(a=>a.recurrence_group_id===item.recurrence_group_id && a.appointment_date >= item.appointment_date).map(a=>a.id)
       if (scope === '3') ids = appointments.filter(a=>a.recurrence_group_id===item.recurrence_group_id).map(a=>a.id)
     }
-    if (!confirm(`Excluir ${ids.length} compromisso(s)?`)) return
+    if (!await ask('Confirmar exclusão','Excluir '+ids.length+' compromisso(s)?')) return
     if (hasSupabase) { const { error } = await supabase.from('nexor_agenda_2026_events').delete().in('id', ids); if (error) { alert('Não foi possível excluir o compromisso: ' + error.message); return }; await refresh() }
     else { const set = new Set(ids); const list = appointments.filter(a=>!set.has(a.id)); setAppointments(list); saveLocal('nexor_agenda_events', list) }
   }
@@ -240,7 +258,7 @@ function AgendaApp({ onLogout }) {
     const record = { ...settings, ...data, id: 'main', default_duration: toNumberZero(data.default_duration), default_price: nullableNumber(data.default_price) }
     if (hasSupabase) { const { error } = await supabase.from('nexor_agenda_2026_settings').upsert(cleanForSupabase(record), { onConflict: 'id' }); if (error) { showSupabaseError('Não foi possível salvar as configurações no Supabase', error); return }; await refresh() }
     else { setSettings(record); saveLocal('nexor_agenda_settings', record) }
-    alert('Configurações salvas')
+    ask('Configurações salvas','As alterações foram registradas.','alert')
   }
 
   const dayAppointments = appointments.filter(a => a.appointment_date === selectedDate).sort((a,b)=>String(a.appointment_time).localeCompare(String(b.appointment_time)))
@@ -259,6 +277,7 @@ function AgendaApp({ onLogout }) {
     {!loading && tab === 'ajustes' && <SettingsScreen settings={settings} onSave={saveSettings} patients={patients} appointments={appointments} pendingPayments={pendingPayments} />}
     <nav className="bottom-nav"><button className={tab==='hoje'?'active':''} onClick={()=>setTab('hoje')}><Sun/><span>Hoje</span></button><button className={tab==='agenda'?'active':''} onClick={()=>setTab('agenda')}><CalendarDays/><span>Agenda</span></button><button className={tab==='clientes'?'active':''} onClick={()=>setTab('clientes')}><UsersRound/><span>Clientes</span></button><button className={tab==='financeiro'?'active':''} onClick={()=>setTab('financeiro')}><BarChart3/><span>Financeiro</span></button><button className={tab==='ajustes'?'active':''} onClick={()=>setTab('ajustes')}><Settings/><span>Ajustes</span></button></nav>
     {modal?.type === 'patient' && <PatientModal item={modal.item} onClose={()=>setModal(null)} onSave={savePatient} />}
+    {dialog && <div className="nexor-dialog-shade"><section className="nexor-dialog"><h2>{dialog.title}</h2><p>{dialog.message}</p>{dialog.kind==='choice'?<div className="nexor-dialog-options">{dialog.options.map(([value,label])=><button key={value} onClick={()=>finishDialog(value)}>{label}</button>)}<button className="nexor-cancel" onClick={()=>finishDialog(null)}>Cancelar</button></div>:<div className="nexor-dialog-actions">{dialog.kind!=='alert' && <button className="nexor-cancel" onClick={()=>finishDialog(false)}>Cancelar</button>}<button className="nexor-ok" onClick={()=>finishDialog(true)}>{dialog.kind==='alert'?'Entendi':'Confirmar'}</button></div>}</section></div>}
     {modal?.type === 'appointment' && <AppointmentModal item={modal.item} patients={patients} selectedDate={selectedDate} settings={settings} onClose={()=>setModal(null)} onSave={saveAppointment} onUpdateGroup={updateRecurringGroup} />}
   </div>
 }
@@ -294,7 +313,7 @@ function CalendarGrid({month, selectedDate, setSelectedDate, appointments}) {
 function PatientsScreen({patients, appointments, onNew, onEdit, onDelete}) {
   const [q,setQ]=useState('')
   const filtered = patients.filter(p => `${p.full_name} ${p.phone} ${p.whatsapp}`.toLowerCase().includes(q.toLowerCase()))
-  return <main className="screen"><PageTitle kicker="PACIENTES" title="Meus Clientes" /><div className="search-row"><label><Search/><input placeholder="Buscar por nome ou telefone..." value={q} onChange={e=>setQ(e.target.value)} /></label><button className="square" onClick={onNew}><Plus/></button></div><div className="cards-list">{filtered.map(p => <PatientCard key={p.id} p={p} appointments={appointments.filter(a=>a.patient_id===p.id)} onEdit={()=>onEdit(p)} onDelete={()=>onDelete(p.id)} />)}</div></main>
+  return <main className="screen"><PageTitle kicker="CLIENTES" title="Meus Clientes" /><div className="search-row"><label><Search/><input placeholder="Buscar por nome ou telefone..." value={q} onChange={e=>setQ(e.target.value)} /></label><button className="square" onClick={onNew}><Plus/></button></div><div className="cards-list">{filtered.map(p => <PatientCard key={p.id} p={p} appointments={appointments.filter(a=>a.patient_id===p.id)} onEdit={()=>onEdit(p)} onDelete={()=>onDelete(p.id)} />)}</div></main>
 }
 function PatientCard({p, appointments, onEdit, onDelete}) {
   const next = appointments.filter(a=>a.appointment_date >= isoToday && a.status !== 'cancelada').sort((a,b)=>`${a.appointment_date} ${a.appointment_time||''}`.localeCompare(`${b.appointment_date} ${b.appointment_time||''}`))[0]
@@ -363,10 +382,11 @@ function PatientModal({item,onClose,onSave}) { const [f,setF]=useState(item || {
 function AppointmentModal({item,patients,selectedDate,settings,onClose,onSave,onUpdateGroup}) {
   const [f,setF]=useState(item || {patient_id: patients[0]?.id || '', patient_name:'', patient_phone:'', appointment_date:selectedDate, appointment_time:'09:00', duration_minutes:settings.default_duration ?? 120, service_type:'Gravação', status:'agendada', payment_status:'pendente', price:settings.default_price ?? '', room:'Cliente', notes:''})
   const [repeat,setRepeat]=useState('none'); const [count,setCount]=useState(4); const [scope,setScope]=useState('one')
+  const [weekdays,setWeekdays]=useState([dateFromISO(item?.appointment_date||selectedDate).getDay()])
   const u=(k,v)=>setF({...f,[k]:v})
   const selectedPatient = patients.find(p=>p.id===f.patient_id)
-  function save(){ if (item?.recurrence_group_id && scope !== 'one') { onUpdateGroup(item, {...f, patient_name:selectedPatient?.full_name || f.patient_name, patient_phone:selectedPatient?.phone || f.patient_phone}, scope); return } onSave(f, { repeat, count }) }
-  return <Modal title={item?'Editar Compromisso':'Novo Compromisso'} onClose={onClose}><label>Cliente<select value={f.patient_id||''} onChange={e=>u('patient_id',e.target.value)}><option value="">Selecionar cliente</option>{patients.map(p=><option key={p.id} value={p.id}>{p.full_name}</option>)}</select></label><p className="form-hint">Cadastre o cliente na aba Clientes antes de marcar o compromisso.</p><div className="two"><label>Data<input type="date" value={f.appointment_date} onChange={e=>u('appointment_date',e.target.value)} /></label><label>Horário<input type="time" value={String(f.appointment_time||'').slice(0,5)} onChange={e=>u('appointment_time',e.target.value)} /></label></div><div className="two"><label>Duração<input type="number" min="0" step="1" placeholder="Ex: 50" value={f.duration_minutes ?? ''} onChange={e=>u('duration_minutes',e.target.value)} /></label><label>Valor<input type="number" min="0" step="0.01" placeholder="Ex: 500" value={f.price ?? ''} onChange={e=>u('price',e.target.value)} /></label></div>{!item && <section className="recurrence-box"><h3><Repeat2 size={16}/> Repetir compromisso</h3><label>Recorrência<select value={repeat} onChange={e=>setRepeat(e.target.value)}><option value="none">Não repetir</option><option value="weekly">Semanal</option><option value="biweekly">Quinzenal</option><option value="monthly">Mensal</option></select></label>{repeat !== 'none' && <label>Quantidade de ocorrências<input type="number" min="1" step="1" value={count} onChange={e=>setCount(e.target.value)} /></label>}</section>}{item?.recurrence_group_id && <section className="recurrence-box"><h3><Repeat2 size={16}/> Compromisso recorrente</h3><label>Aplicar alteração em:<select value={scope} onChange={e=>setScope(e.target.value)}><option value="one">Apenas esto compromisso</option><option value="future">Esta e próximas</option><option value="all">Toda a sequência</option></select></label></section>}<label>Tipo<input value={f.service_type||''} onChange={e=>u('service_type',e.target.value)} /></label><div className="two"><label>Status<select value={f.status} onChange={e=>u('status',e.target.value)}><option value="agendada">Agendada</option><option value="aguardando_confirmacao">Aguardando confirmação</option><option value="confirmada">Confirmada</option><option value="realizada">Realizada</option><option value="remarcada">Remarcada</option><option value="faltou">Faltou</option><option value="cancelada">Cancelada</option></select></label><label>Pagamento<select value={f.payment_status} onChange={e=>u('payment_status',e.target.value)}><option value="pendente">Pendente</option><option value="pago">Pago</option><option value="cortesia">Cortesia</option></select></label></div><label>Observações<textarea value={f.notes||''} onChange={e=>u('notes',e.target.value)} /></label><button className="primary wide" onClick={save}><Save/> Salvar Compromisso</button></Modal>
+  function save(){ if (item?.recurrence_group_id && scope !== 'one') { onUpdateGroup(item, {...f, patient_name:selectedPatient?.full_name || f.patient_name, patient_phone:selectedPatient?.phone || f.patient_phone}, scope); return } onSave(f, { repeat, count, weekdays }) }
+  return <Modal title={item?'Editar Compromisso':'Novo Compromisso'} onClose={onClose}><label>Cliente<select value={f.patient_id||''} onChange={e=>u('patient_id',e.target.value)}><option value="">Selecionar cliente</option>{patients.map(p=><option key={p.id} value={p.id}>{p.full_name}</option>)}</select></label><p className="form-hint">Cadastre o cliente na aba Clientes antes de marcar o compromisso.</p><div className="two"><label>Data<input type="date" value={f.appointment_date} onChange={e=>u('appointment_date',e.target.value)} /></label><label>Horário<input type="time" value={String(f.appointment_time||'').slice(0,5)} onChange={e=>u('appointment_time',e.target.value)} /></label></div><div className="two"><label>Duração<input type="number" min="0" step="1" placeholder="Ex: 50" value={f.duration_minutes ?? ''} onChange={e=>u('duration_minutes',e.target.value)} /></label><label>Valor<input type="number" min="0" step="0.01" placeholder="Ex: 500" value={f.price ?? ''} onChange={e=>u('price',e.target.value)} /></label></div>{!item && <section className="recurrence-box"><h3><Repeat2 size={16}/> Repetir compromisso</h3><label>Recorrência<select value={repeat} onChange={e=>setRepeat(e.target.value)}><option value="none">Não repetir</option><option value="weekly">Semanal</option><option value="biweekly">Quinzenal</option><option value="monthly">Mensal</option><option value="weekday">Por dia da semana</option></select></label>{repeat==='weekday' && <div className="weekday-select"><span>Repete toda:</span>{WEEKDAYS.map(([short,label,number])=><button type="button" key={number} title={label} className={weekdays.includes(number)?'active':''} onClick={()=>setWeekdays(old=>old.includes(number)?(old.length>1?old.filter(v=>v!==number):old):[...old,number])}>{short}</button>)}</div>}{repeat !== 'none' && <label>Quantidade de ocorrências<input type="number" min="1" step="1" value={count} onChange={e=>setCount(e.target.value)} /></label>}</section>}{item?.recurrence_group_id && <section className="recurrence-box"><h3><Repeat2 size={16}/> Compromisso recorrente</h3><label>Aplicar alteração em:<select value={scope} onChange={e=>setScope(e.target.value)}><option value="one">Apenas este compromisso</option><option value="future">Esta e próximas</option><option value="all">Toda a sequência</option></select></label></section>}<label>Tipo<input value={f.service_type||''} onChange={e=>u('service_type',e.target.value)} /></label><div className="two"><label>Status<select value={f.status} onChange={e=>u('status',e.target.value)}><option value="agendada">Agendada</option><option value="aguardando_confirmacao">Aguardando confirmação</option><option value="confirmada">Confirmada</option><option value="realizada">Realizada</option><option value="remarcada">Remarcada</option><option value="faltou">Faltou</option><option value="cancelada">Cancelada</option></select></label><label>Pagamento<select value={f.payment_status} onChange={e=>u('payment_status',e.target.value)}><option value="pendente">Pendente</option><option value="pago">Pago</option><option value="cortesia">Cortesia</option></select></label></div><label>Observações<textarea value={f.notes||''} onChange={e=>u('notes',e.target.value)} /></label><button className="primary wide" onClick={save}><Save/> Salvar Compromisso</button></Modal>
 }
 function Modal({title,children,onClose}) { return <div className="overlay"><section className="modal"><div className="modal-head"><h2>{title}</h2><button onClick={onClose}><X/></button></div>{children}</section></div> }
 function Badge({type,children}) { return <span className={`badge ${type}`}>{children}</span> }
@@ -374,7 +394,7 @@ function Empty({text}) { return <div className="empty">{text}</div> }
 function labelStatus(s){return {agendada:'Agendada',aguardando_confirmacao:'Aguardando confirmação',confirmada:'Confirmada',realizada:'Realizada',remarcada:'Remarcada',faltou:'Faltou',cancelada:'Cancelada'}[s]||s}
 function labelPay(s){return {pago:'Pago',pendente:'Pendente',cortesia:'Cortesia'}[s]||s}
 function labelPatient(s){return {ativo:'Ativo',em_avaliacao:'Em negociação',finalizado:'Finalizado',inativo:'Inativo'}[s]||s}
-function labelRepeat(s){return {weekly:'Semanal',biweekly:'Quinzenal',monthly:'Mensal'}[s]||'Recorrente'}
+function labelRepeat(s){if(String(s).startsWith('weekday:'))return 'Dias fixos';return {weekly:'Semanal',biweekly:'Quinzenal',monthly:'Mensal'}[s]||'Recorrente'}
 function timeOpts(){ const arr=[]; for(let h=6;h<=22;h++) arr.push(`${String(h).padStart(2,'0')}:00`); return arr }
 
 createRoot(document.getElementById('root')).render(<App />)
